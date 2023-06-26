@@ -1,27 +1,50 @@
-- import requests
+import os
+from flask import Flask, request, jsonify
+from werkzeug.utils import secure_filename
 
-def compress_gif(api_key, input_file_path, output_file_path):
-    url = 'https://api.tinify.com/shrink'
-    auth = ('api', api_key)
+app = Flask(__name__)
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'gif'}
 
-    with open(input_file_path, 'rb') as file:
-        response = requests.post(url, auth=auth, files={'input': file})
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB maximum file size
 
-    if response.status_code == 201:
-        result_url = response.headers['Location']
-        response = requests.get(result_url, auth=auth, stream=True)
 
-        with open(output_file_path, 'wb') as output_file:
-            for chunk in response.iter_content(chunk_size=1024):
-                output_file.write(chunk)
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-        print('Compression successful!')
-    else:
-        print('Compression failed:', response.json())
 
-# Usage example
-api_key = 'YOUR_API_KEY'
-input_file_path = 'input.gif'
-output_file_path = 'output.gif'
+def compress_gif(input_path, output_path, quality):
+    cmd = f'ffmpeg -i {input_path} -vf "fps=10,scale=320:-1:flags=lanczos" -c:v gif -b:v {quality} {output_path}'
+    os.system(cmd)
 
-compress_gif(api_key, input_file_path, output_file_path)
+
+@app.route('/compress', methods=['POST'])
+def compress():
+    # Check if the POST request has the file part
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part in the request'})
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'})
+
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+
+        # Compress the GIF
+        output_path = os.path.join(app.config['UPLOAD_FOLDER'], 'compressed_' + filename)
+        compress_gif(file_path, output_path, '1M')
+
+        # Return the compressed GIF
+        return jsonify({'compressed_file': output_path})
+
+    return jsonify({'error': 'Invalid file format. Only GIF files are allowed.'})
+
+
+if __name__ == '__main__':
+    app.run()
